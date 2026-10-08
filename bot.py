@@ -10,7 +10,8 @@ import feedparser
 import requests
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["CHAT_ID"]  # @channelname or numeric ID like -100123...
+CHAT_IDS = [c.strip() for c in os.environ["CHAT_ID"].split(",") if c.strip()]
+# CHAT_ID can hold one or more IDs separated by commas: @channel1,-1001234567890
 FEED_URL = os.environ["FEED_URL"]
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))  # seconds
 SEEN_FILE = os.getenv("SEEN_FILE", "seen.json")
@@ -63,6 +64,31 @@ def get_summary(entry):
     return truncate(clean_text(raw), SUMMARY_LIMIT)
 
 
+def get_og_image(page_url):
+    """Fetch the article page and read its preview image (og:image)."""
+    if not page_url:
+        return None
+    try:
+        r = requests.get(page_url, headers={"User-Agent": USER_AGENT}, timeout=20)
+    except requests.RequestException as exc:
+        logging.warning("Could not open article page: %s", exc)
+        return None
+    if not r.ok:
+        logging.warning("Article page returned HTTP %s", r.status_code)
+        return None
+    head = r.text[:300000]
+    patterns = (
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, head, re.I)
+        if match:
+            return html.unescape(match.group(1))
+    return None
+
+
 def get_image(entry):
     candidates = []
 
@@ -94,7 +120,10 @@ def get_image(entry):
     for url in candidates:
         if url:
             return urljoin(entry.get("link", ""), url)
-    return None
+
+    # Nothing in the feed: use the article's own preview image
+    og = get_og_image(entry.get("link"))
+    return urljoin(entry.get("link", ""), og) if og else None
 
 
 def telegram(method, payload):
@@ -111,7 +140,7 @@ def telegram(method, payload):
     return False
 
 
-def send(entry):
+def send_to(chat_id, entry):
     title = html.escape(truncate(clean_text(entry.get("title", "New post")), 200))
     summary = html.escape(get_summary(entry))
     text = f"<b>{title}</b>"
@@ -119,11 +148,12 @@ def send(entry):
         text += f"\n\n{summary}"
 
     image = get_image(entry)
+    logging.info("Image: %s", image or "none")
     if image:
         ok = telegram(
             "sendPhoto",
             {
-                "chat_id": CHAT_ID,
+                "chat_id": chat_id,
                 "photo": image,
                 "caption": text,
                 "parse_mode": "HTML",
@@ -136,12 +166,24 @@ def send(entry):
     return telegram(
         "sendMessage",
         {
-            "chat_id": CHAT_ID,
+            "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         },
     )
+
+
+def send(entry):
+    # Post to every channel; count as sent if at least one succeeded
+    results = []
+    for chat_id in CHAT_IDS:
+        ok = send_to(chat_id, entry)
+        if not ok:
+            logging.warning("Failed to post to %s", chat_id)
+        results.append(ok)
+        time.sleep(1)
+    return any(results)
 
 
 def check_feed(seen):
@@ -201,4 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
