@@ -1,0 +1,42 @@
+name: Post RSS updates
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rss-bot
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run bot
+        run: python bot.py
+        env:
+          RUN_ONCE: "1"
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          FEED_URL: ${{ secrets.FEED_URL }}
+
+      - name: Save seen.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f seen.json ]; then git add seen.json; fi
+          git diff --staged --quiet || (git commit -m "Update seen.json" && git push)
+          
