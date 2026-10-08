@@ -9,9 +9,9 @@ from urllib.parse import urljoin
 import feedparser
 import requests
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["CHAT_ID"]  # @channelname or numeric ID like -100123...
-FEED_URL = os.environ["FEED_URL"]
+BOT_TOKEN = os.environ["8612323047:AAHFUQRz_fifzF09r4y14IBjKfNA-vNL2gw"]
+CHAT_ID = os.environ["@updateena"]  # @channelname or numeric ID like -100123...
+FEED_URL = os.environ["https://techcrunch.com/rss"]
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))  # seconds
 SEEN_FILE = os.getenv("SEEN_FILE", "seen.json")
 SUMMARY_LIMIT = int(os.getenv("SUMMARY_LIMIT", "600"))  # characters
