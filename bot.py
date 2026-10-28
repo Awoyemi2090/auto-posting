@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from urllib.parse import urljoin
 
@@ -12,7 +13,9 @@ import requests
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_IDS = [c.strip() for c in os.environ["CHAT_ID"].split(",") if c.strip()]
 # CHAT_ID can hold one or more IDs separated by commas: @channel1,-1001234567890
-FEED_URL = os.environ["FEED_URL"]
+FEED_URLS = [u.strip() for u in re.split(r"[,\n]", os.environ["FEED_URL"]) if u.strip()]
+# FEED_URL can hold one or more feed links, separated by commas or new lines
+SHOW_LINK = os.getenv("SHOW_LINK", "1") == "1"  # add a link to the full story
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))  # seconds
 SEEN_FILE = os.getenv("SEEN_FILE", "seen.json")
 SUMMARY_LIMIT = int(os.getenv("SUMMARY_LIMIT", "600"))  # characters
@@ -32,7 +35,7 @@ def load_seen():
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
             return set(json.load(f))
     except (FileNotFoundError, json.JSONDecodeError):
-        return None  # None = first run
+        return set()
 
 
 def save_seen(seen):
@@ -146,6 +149,9 @@ def send_to(chat_id, entry):
     text = f"<b>{title}</b>"
     if summary:
         text += f"\n\n{summary}"
+    link = entry.get("link", "")
+    if SHOW_LINK and link:
+        text += f'\n\n<a href="{html.escape(link, quote=True)}">Read the full story</a>'
 
     image = get_image(entry)
     logging.info("Image: %s", image or "none")
@@ -186,37 +192,29 @@ def send(entry):
     return any(results)
 
 
-def check_feed(seen):
-    resp = requests.get(FEED_URL, headers={"User-Agent": USER_AGENT}, timeout=30)
-    logging.info(
-        "Feed HTTP %s, %d bytes, type %s",
-        resp.status_code,
-        len(resp.content),
-        resp.headers.get("Content-Type"),
-    )
-    if not resp.ok:
-        logging.warning("Feed request failed with status %s", resp.status_code)
-        return seen
+def check_feed(url, seen):
+    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    logging.info("Feed %s: HTTP %s, %d bytes", url, resp.status_code, len(resp.content))
+    resp.raise_for_status()
     feed = feedparser.parse(resp.content)
-    logging.info(
-        "Parsed as %s, raw entries: %d", feed.get("version") or "unknown", len(feed.entries)
-    )
-    if feed.bozo and not feed.entries:
-        logging.warning("Could not read feed: %s", feed.get("bozo_exception"))
-        return seen
-
     entries = [e for e in feed.entries if entry_id(e)]
-    logging.info("Feed returned %d entries", len(entries))
+    logging.info("Feed returned %d entries (%s)", len(entries), feed.get("version") or "unknown type")
     if not entries:
-        logging.warning("No entries found in feed, nothing to do")
+        logging.warning("No entries found in %s, nothing to do", url)
         return seen
 
-    # First run (or empty seen file): remember what's already there
-    if not seen:
-        seen = {entry_id(e) for e in entries}
-        save_seen(seen)
-        logging.info("First run: marked %d existing items as seen", len(seen))
-        return seen
+    # Each feed gets a marker once it has been set up. A brand-new feed is
+    # recorded silently so adding it never floods your channels.
+    marker = f"feed:{url}"
+    ids = {entry_id(e) for e in entries}
+    if marker not in seen:
+        seen.add(marker)
+        if not (ids & seen):
+            seen |= ids
+            save_seen(seen)
+            logging.info("New feed: marked %d existing items as seen", len(ids))
+            return seen
+        save_seen(seen)  # feed was already in use before markers existed
 
     new_entries = [e for e in entries if entry_id(e) not in seen]
     for entry in reversed(new_entries):  # oldest first
@@ -228,16 +226,26 @@ def check_feed(seen):
     return seen
 
 
+def check_feeds(seen):
+    failures = 0
+    for url in FEED_URLS:
+        try:
+            seen = check_feed(url, seen)
+        except Exception:
+            failures += 1
+            logging.exception("Error with feed %s", url)
+    return seen, failures
+
+
 def main():
     seen = load_seen()
     if os.getenv("RUN_ONCE") == "1":  # for GitHub Actions: check once and exit
-        check_feed(seen)
+        seen, failures = check_feeds(seen)
+        if failures:
+            sys.exit(1)  # make the run show red so you notice a broken feed
         return
     while True:
-        try:
-            seen = check_feed(seen)
-        except Exception:
-            logging.exception("Error while checking feed")
+        seen, _ = check_feeds(seen)
         time.sleep(CHECK_INTERVAL)
 
 
