@@ -1,21 +1,21 @@
 # RSS to Telegram Auto-Poster
 
-Checks an RSS feed on a schedule and posts every new item to one or more Telegram channels or groups, with the title, a short summary and the article's picture. It runs for free on GitHub Actions, so you don't need a server.
+Checks one or more RSS feeds on a schedule and posts every new item to one or more Telegram channels or groups, with the title, a short summary, the article's picture and a link to the full story. It runs for free on GitHub Actions, so you don't need a server.
 
 ## What it does
 
-- Reads an RSS feed and posts only items it hasn't posted before
+- Reads one or more RSS feeds and posts only items it hasn't posted before
 - Each post has a bold title, a summary (HTML removed, trimmed to 600 characters) and an image
 - Finds the image from the feed's media tags, or the first picture in the item, or the article page's preview image
 - Posts to several channels or groups at once
 - Remembers what it has posted in `seen.json`, so nothing is sent twice
-- Posts no link to the original article
+- Adds a "Read the full story" link to every post (turn it off with `SHOW_LINK=0`)
 
 ## How it works
 
 A GitHub Actions workflow runs `bot.py` every 30 minutes. The script reads the feed, compares it with `seen.json`, posts anything new, and the workflow saves the updated `seen.json` back to the repo.
 
-On the **first run** the bot records the items already in the feed and posts nothing, so your channel isn't flooded.
+The first time the bot sees a feed, it records that feed's existing items and posts nothing, so your channels aren't flooded. This also applies when you add a new feed later.
 
 ## Files
 
@@ -37,11 +37,12 @@ On the **first run** the bot records the items already in the feed and posts not
    |---|---|
    | `BOT_TOKEN` | the token from BotFather |
    | `CHAT_ID` | one or more IDs separated by commas, for example `@channel1,@channel2` |
-   | `FEED_URL` | the full RSS link, including `https://` |
+   | `FEED_URL` | the full RSS link, including `https://`. For several feeds, separate the links with commas or put each on its own line |
 
 5. Make sure the workflow file is at `.github/workflows/post.yml`.
 6. Go to **Actions → Post RSS updates → Run workflow**. The first run only records the current items.
 7. To test a real post, open `seen.json`, delete one entry, commit, and run the workflow again.
+8. To add another feed later, edit the `FEED_URL` secret and add the new link after a comma. Its current items are recorded silently, and only new ones are posted after that.
 
 ## Configuration
 
@@ -51,7 +52,8 @@ Set these as environment variables (in the `env:` section of the workflow for Ac
 |---|---|---|---|
 | `BOT_TOKEN` | yes | | Telegram bot token |
 | `CHAT_ID` | yes | | Chat ID or several, separated by commas |
-| `FEED_URL` | yes | | RSS feed link |
+| `FEED_URL` | yes | | One or more RSS feed links, separated by commas or new lines |
+| `SHOW_LINK` | no | `1` | Set to `0` to leave out the "Read the full story" link |
 | `RUN_ONCE` | no | off | Set to `1` to check once and exit (used by the workflow) |
 | `CHECK_INTERVAL` | no | `600` | Seconds between checks when running non-stop |
 | `SUMMARY_LIMIT` | no | `600` | Maximum summary length in characters |
@@ -68,6 +70,7 @@ Edit the `cron` line in `post.yml`. The default `"7,37 * * * *"` means minutes 7
 | `Invalid URL '': No scheme supplied` | The `FEED_URL` secret is missing or misspelled. Re-add it with the exact name. |
 | `Feed returned 0 entries` | The feed link is wrong or the site is blocking the request. Open the link in a browser to check. |
 | `Telegram sendMessage error` in the log | The bot isn't an admin of that channel, or `CHAT_ID` is wrong. |
+| Run is red, but other feeds still posted | One feed failed (wrong link or the site is down). Open the log to see which one. The other feeds are still checked. |
 | Run is green but nothing posts | There is no new item since the last run. This is normal. |
 | Reposts after a redeploy | `seen.json` was lost. Keep it committed in the repo. |
 | Scheduled runs don't appear | GitHub delays or skips cron runs. Wait an hour, or move the minutes to off-peak values. |
